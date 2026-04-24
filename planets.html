@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comet Observatory · Visible Planets</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="pages.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="astro.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" src="shell.jsx"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+    const RAD = Math.PI / 180, DEG = 180 / Math.PI;
+
+    function computeVisibility(loc, hourOffset = 0) {
+      const now = new Date(Date.now() + hourOffset * 3600000);
+      const jd = window.Astro.julianDate(now);
+      const lst = window.Astro.localSiderealTime(jd, loc.lon);
+      const lat = loc.lat * RAD;
+      const sun = window.Astro.sunPosition(jd);
+      const sunAltAz = window.Astro.raDecToAltAz(sun.ra, sun.dec, lst, lat);
+
+      const results = Object.entries(window.Astro.PLANETS)
+        .filter(([k]) => k !== "earth")
+        .map(([key, pl]) => {
+          const rd = window.Astro.planetRaDec(pl, jd);
+          const { alt, az } = window.Astro.raDecToAltAz(rd.ra, rd.dec, lst, lat);
+          // approx magnitude — use distance & size proxy
+          const mag = -26 + 5 * Math.log10(rd.dist) - 2.5 * Math.log10(pl.size * pl.size + 0.01);
+          return {
+            key, name: key[0].toUpperCase() + key.slice(1),
+            color: pl.color,
+            altDeg: alt * DEG,
+            azDeg: az * DEG,
+            distAU: rd.dist,
+            raDeg: ((rd.ra * DEG) % 360 + 360) % 360,
+            decDeg: rd.dec * DEG,
+            mag: mag,
+            visible: alt > 0,
+            moons: pl.moons,
+          };
+        });
+      return { results, sunAlt: sunAltAz.alt * DEG, night: sunAltAz.alt * DEG < -6 };
+    }
+
+    function fmtRA(deg) {
+      const h = deg / 15;
+      const hh = Math.floor(h);
+      const mm = Math.floor((h - hh) * 60);
+      const ss = Math.floor(((h - hh) * 60 - mm) * 60);
+      return `${String(hh).padStart(2,"0")}h ${String(mm).padStart(2,"0")}m ${String(ss).padStart(2,"0")}s`;
+    }
+    function fmtDec(deg) {
+      const sign = deg >= 0 ? "+" : "−";
+      const a = Math.abs(deg);
+      const d = Math.floor(a);
+      const m = Math.floor((a - d) * 60);
+      const s = Math.floor(((a - d) * 60 - m) * 60);
+      return `${sign}${String(d).padStart(2,"0")}° ${String(m).padStart(2,"0")}′ ${String(s).padStart(2,"0")}″`;
+    }
+
+    function SkyDome({ planets }) {
+      // simple az/alt projection onto panel: az 0..360 mapped to width, alt -90..90 mapped to height (0 alt at 70% from top)
+      return (
+        <div className="skyview">
+          <div className="skyview__horizon" />
+          <div className="skyview__axis-label" style={{ left: 16, top: 12 }}>ZENITH ↑</div>
+          <div className="skyview__axis-label" style={{ left: 16, bottom: 14 }}>HORIZON</div>
+          <div className="skyview__axis-label" style={{ left: "25%", bottom: 8 }}>E</div>
+          <div className="skyview__axis-label" style={{ left: "50%", bottom: 8 }}>S</div>
+          <div className="skyview__axis-label" style={{ left: "75%", bottom: 8 }}>W</div>
+          {planets.filter(p => p.altDeg > -10).map(p => {
+            const x = (p.azDeg / 360) * 100;
+            // alt 90 -> top (5%), alt 0 -> horizon line (70%), alt -10 -> below (80%)
+            const y = 70 - (p.altDeg / 90) * 65;
+            return (
+              <React.Fragment key={p.key}>
+                <div className="skyview__planet" style={{
+                  left: x + "%", top: y + "%", background: p.color,
+                  color: p.color, opacity: p.altDeg > 0 ? 1 : 0.4,
+                }} />
+                <div className="skyview__planet-label" style={{ left: x + "%", top: y + "%" }}>{p.name}</div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function PlanetCard({ p }) {
+      const altPct = Math.max(-10, Math.min(90, p.altDeg));
+      const barLeft = altPct >= 0 ? 50 : 50 + (altPct / 10) * 50;
+      const barWidth = Math.abs(altPct >= 0 ? (altPct / 90) * 50 : (-altPct / 10) * 50);
+      return (
+        <div className="planet-card">
+          <div className="planet-card__glow" style={{ background: p.color }} />
+          <div className="planet-card__vis-chip">
+            <span className={"chip " + (p.visible ? "chip--ok" : "")}>{p.visible ? "Above horizon" : "Below"}</span>
+          </div>
+          <h3 className="planet-card__name">{p.name}</h3>
+          <div className="planet-card__type">
+            {p.moons.length ? `${p.moons.length} moon${p.moons.length > 1 ? "s" : ""} · ${p.moons.map(m => m.name).join(", ")}` : "No visible moons"}
+          </div>
+          <div className="planet-card__stats" style={{ marginTop: 20 }}>
+            <div>
+              <div className="planet-card__stat-label">ALT</div>
+              <div className="planet-card__stat-value" style={{ color: p.visible ? "var(--cyan)" : "var(--ink-faint)" }}>{p.altDeg.toFixed(1)}°</div>
+              <div className="planet-card__altbar">
+                <div className={"planet-card__altbar-fill" + (p.altDeg < 0 ? " planet-card__altbar-fill--below" : "")}
+                  style={{ left: (altPct >= 0 ? 50 : barLeft) + "%", width: barWidth + "%" }} />
+              </div>
+            </div>
+            <div>
+              <div className="planet-card__stat-label">AZ</div>
+              <div className="planet-card__stat-value">{p.azDeg.toFixed(1)}°</div>
+            </div>
+            <div>
+              <div className="planet-card__stat-label">RA</div>
+              <div className="planet-card__stat-value" style={{ fontSize: 11 }}>{fmtRA(p.raDeg)}</div>
+            </div>
+            <div>
+              <div className="planet-card__stat-label">DEC</div>
+              <div className="planet-card__stat-value" style={{ fontSize: 11 }}>{fmtDec(p.decDeg)}</div>
+            </div>
+            <div>
+              <div className="planet-card__stat-label">MAG</div>
+              <div className="planet-card__stat-value">{p.mag.toFixed(1)}</div>
+            </div>
+            <div>
+              <div className="planet-card__stat-label">DIST</div>
+              <div className="planet-card__stat-value">{p.distAU.toFixed(2)} AU</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function fmtOffset(h) {
+      if (h === 0) return "now";
+      const absH = Math.abs(h);
+      const sign = h > 0 ? "+" : "−";
+      if (absH < 24) return `${sign}${absH}h`;
+      const d = Math.floor(absH / 24), rh = absH % 24;
+      return rh === 0 ? `${sign}${d}d` : `${sign}${d}d ${rh}h`;
+    }
+
+    function PlanetsPage() {
+      const [tick, setTick] = useState(0);
+      const [hourOffset, setHourOffset] = useState(0);
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 30000);
+        return () => clearInterval(id);
+      }, []);
+      return (
+        <Shell current="planets.html">
+          {({ loc }) => {
+            const { results, sunAlt, night, targetTime } = useMemo(() => {
+              const r = computeVisibility(loc, hourOffset);
+              const target = new Date(Date.now() + hourOffset * 3600000);
+              return { ...r, targetTime: target };
+            }, [loc, tick, hourOffset]);
+            const above = results.filter(p => p.visible).length;
+            const localStr = targetTime.toLocaleString(undefined, {
+              weekday: "short", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short",
+            });
+            return (
+              <div className="planets-page">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 6 }}>
+                  <div>
+                    <h1 className="page-title">Visible Tonight</h1>
+                    <div className="page-sub">Real-time alt/az for your site · for astrophotography planning</div>
+                  </div>
+                  <div className="mono" style={{ display: "flex", gap: 20, fontSize: 11 }}>
+                    <div><span className="faint" style={{ letterSpacing: "0.1em" }}>SUN ALT </span><span style={{ color: night ? "var(--ok)" : "var(--warn)" }}>{sunAlt.toFixed(1)}°</span></div>
+                    <div><span className="faint" style={{ letterSpacing: "0.1em" }}>STATE </span><span style={{ color: night ? "var(--ok)" : "var(--warn)" }}>{night ? "ASTRO DARK" : "TWILIGHT/DAY"}</span></div>
+                    <div><span className="faint" style={{ letterSpacing: "0.1em" }}>UP </span>{above}/7</div>
+                  </div>
+                </div>
+
+                <div className="planets-time">
+                  <span className="planets-time__label">TIME</span>
+                  <input type="range" min="-72" max="72" step="1" value={hourOffset}
+                    onChange={e => setHourOffset(Number(e.target.value))} />
+                  <span className="planets-time__value">{fmtOffset(hourOffset)} · {localStr}</span>
+                  <button onClick={() => setHourOffset(0)}
+                    style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.12em", padding: "3px 10px" }}>
+                    NOW
+                  </button>
+                </div>
+
+                <SkyDome planets={results} />
+
+                <div className="planets-grid">
+                  {results.sort((a,b) => b.altDeg - a.altDeg).map(p => <PlanetCard key={p.key} p={p} />)}
+                </div>
+              </div>
+            );
+          }}
+        </Shell>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<PlanetsPage />);
+  </script>
+</body>
+</html>

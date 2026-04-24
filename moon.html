@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comet Observatory · Moon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="pages.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="astro.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" src="shell.jsx"></script>
+  <script type="text/babel" src="moon-view.jsx"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    function PhaseRing({ phase, illum, waxing, size = 140 }) {
+      // Draw moon disk with terminator
+      const r = size / 2 - 4;
+      const cx = size / 2, cy = size / 2;
+      // Compute terminator ellipse width based on illumination
+      // illum: 0 = new, 1 = full. k = 2*illum - 1 (range -1..1)
+      const k = Math.cos(phase * Math.PI * 2); // proper phase angle for waxing/waning
+      const eWidth = Math.abs(k) * r;
+      const litRight = phase < 0.5; // waxing → lit side on right
+      return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          <defs>
+            <radialGradient id="mg" cx="0.3" cy="0.3">
+              <stop offset="0" stopColor="#e8e2d1" />
+              <stop offset="1" stopColor="#a89f8b" />
+            </radialGradient>
+          </defs>
+          <circle cx={cx} cy={cy} r={r} fill="#111621" stroke="rgba(140,170,255,0.25)" />
+          {/* lit portion */}
+          <defs>
+            <clipPath id="litclip">
+              {phase < 0.5 ? (
+                <path d={describeLit(cx, cy, r, eWidth, true, k < 0)} />
+              ) : (
+                <path d={describeLit(cx, cy, r, eWidth, false, k < 0)} />
+              )}
+            </clipPath>
+          </defs>
+          <circle cx={cx} cy={cy} r={r} fill="url(#mg)" clipPath="url(#litclip)" />
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(140,170,255,0.35)" />
+        </svg>
+      );
+    }
+
+    function describeLit(cx, cy, r, eW, litOnRight, gibbous) {
+      // Lit region bounded by semi-circle on one side + ellipse-half on the other
+      const top = cy - r, bot = cy + r;
+      if (litOnRight) {
+        // half-circle on right + inner arc
+        const outerLeft = ` M ${cx} ${top} A ${r} ${r} 0 0 1 ${cx} ${bot}`;
+        // terminator: ellipse half from bottom back to top
+        const sweep = gibbous ? 0 : 1;
+        const inner = ` A ${eW} ${r} 0 0 ${sweep} ${cx} ${top} Z`;
+        return outerLeft + inner;
+      } else {
+        const outerRight = ` M ${cx} ${top} A ${r} ${r} 0 0 0 ${cx} ${bot}`;
+        const sweep = gibbous ? 1 : 0;
+        const inner = ` A ${eW} ${r} 0 0 ${sweep} ${cx} ${top} Z`;
+        return outerRight + inner;
+      }
+    }
+
+    function fmtPct(v) { return (v * 100).toFixed(1) + "%"; }
+    function fmtDays(age) {
+      // age in deg → days (synodic 29.53)
+      const d = (age / 360) * 29.53;
+      return d.toFixed(1) + " d";
+    }
+
+    function MoonPage() {
+      const [tick, setTick] = useState(0);
+      const [active, setActive] = useState(null);
+      const [filter, setFilter] = useState("all");
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 60000);
+        return () => clearInterval(id);
+      }, []);
+
+      const now = new Date();
+      const jd = window.Astro.julianDate(now);
+      const phase = window.Astro.moonPhase(jd);
+      const moonPos = window.Astro.moonPosition(jd);
+
+      const features = useMemo(() => {
+        const f = window.MOON_FEATURES || [];
+        if (filter === "all") return f;
+        return f.filter(x => x.type === filter);
+      }, [filter]);
+
+      return (
+        <Shell current="moon.html">
+          <div className="moon-page">
+            <div className="moon-stage">
+              <MoonView phase={phase.phase} activeFeature={active} filterType={filter} />
+            </div>
+            <aside className="moon-side">
+              <div className="page-sub" style={{ marginBottom: 16 }}>LUNAR OBSERVATION</div>
+              <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 500 }}>{phase.name}</h2>
+              <div className="mono" style={{ fontSize: 11, color: "var(--ink-faint)", letterSpacing: "0.08em", marginBottom: 16 }}>
+                {fmtPct(phase.illum)} ILLUMINATED · AGE {fmtDays(phase.age)}
+              </div>
+
+              <div className="phase-ring">
+                <PhaseRing phase={phase.phase} illum={phase.illum} waxing={phase.waxing} size={140} />
+              </div>
+
+              <div className="moon-info-grid">
+                <div><div className="lbl">DIST</div><div>{Math.round(moonPos.dist).toLocaleString()} km</div></div>
+                <div><div className="lbl">ANG DIAM</div><div>{(2 * Math.atan(1737 / moonPos.dist) * 180 / Math.PI * 60).toFixed(1)}′</div></div>
+                <div><div className="lbl">RA</div><div>{(moonPos.ra * 180 / Math.PI / 15).toFixed(2)}h</div></div>
+                <div><div className="lbl">DEC</div><div>{(moonPos.dec * 180 / Math.PI).toFixed(1)}°</div></div>
+              </div>
+
+              <div className="page-sub" style={{ marginBottom: 8 }}>SURFACE FEATURES</div>
+              <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+                {["all", "mare", "crater", "range", "landing"].map(k => (
+                  <button key={k} onClick={() => setFilter(k)}
+                    style={{
+                      fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
+                      padding: "3px 8px",
+                      background: filter === k ? "var(--bg-3)" : "transparent",
+                      color: filter === k ? "var(--ink)" : "var(--ink-faint)",
+                    }}>{k}</button>
+                ))}
+              </div>
+
+              <div className="feature-list">
+                {features.map(f => (
+                  <div key={f.name}
+                    className={"feature-item" + (active === f.name ? " active" : "")}
+                    onClick={() => setActive(active === f.name ? null : f.name)}>
+                    <span>{f.name}</span>
+                    <span className="type-tag">{f.type}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mono" style={{ fontSize: 10, color: "var(--ink-faint)", letterSpacing: "0.08em", marginTop: 20, lineHeight: 1.6 }}>
+                CLICK · center a feature<br/>
+                DRAG · rotate the globe
+              </div>
+            </aside>
+          </div>
+        </Shell>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<MoonPage />);
+  </script>
+</body>
+</html>

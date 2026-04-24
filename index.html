@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comet Observatory · Solar System Map</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="pages.css" />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="astro.js"></script>
+  <script src="comets-data.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" src="shell.jsx"></script>
+  <script type="text/babel" src="solar-map.jsx"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    function Home() {
+      const [comets, setComets] = useState([]);
+      const [source, setSource] = useState("Loading…");
+      const [selectedIds, setSelectedIds] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("co_selected") || "[]"); } catch { return []; }
+      });
+      useEffect(() => { localStorage.setItem("co_selected", JSON.stringify(selectedIds)); }, [selectedIds]);
+
+      const [query, setQuery] = useState("");
+      const [showOrbits, setShowOrbits] = useState(true);
+      const [showLabels, setShowLabels] = useState(true);
+      const [timeOffsetDays, setTimeOffsetDays] = useState(0);
+
+      useEffect(() => {
+        window.CometData.fetchCometsFromJPL().then(res => {
+          setComets(res.comets);
+          setSource(res.source);
+          if (selectedIds.length === 0 && res.comets.length) {
+            setSelectedIds(res.comets.slice(0, 3).map(c => c.designation));
+          }
+        });
+      }, []);
+
+      const filtered = useMemo(() => {
+        const q = query.toLowerCase().trim();
+        return comets
+          .filter(c => c.mag < 15)
+          .filter(c => !q || c.name.toLowerCase().includes(q) || (c.designation || "").toLowerCase().includes(q))
+          .sort((a, b) => a.mag - b.mag);
+      }, [comets, query]);
+
+      const toggle = (id) => setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+
+      return (
+        <Shell current="index.html">
+          <div className="home">
+            <div className="home__map">
+              <SolarMap
+                comets={comets}
+                selectedCometIds={selectedIds}
+                options={{
+                  showLabels, showOrbits, timeOffsetDays,
+                  onTimeOffsetChange: setTimeOffsetDays,
+                  onToggleLabels: setShowLabels,
+                  onToggleOrbits: setShowOrbits,
+                }}
+              />
+            </div>
+            <aside className="home__side">
+              <div className="home__side-section">
+                <h3>Selection <span className="count">{selectedIds.length} ACTIVE</span></h3>
+                {selectedIds.length === 0 ? (
+                  <div className="mono faint" style={{ fontSize: 11 }}>No comets plotted. Toggle any row below to overlay its orbit.</div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {selectedIds.map(id => (
+                      <span key={id} className="home__selected-chip" onClick={() => toggle(id)}>
+                        {id} ×
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="home__side-section" style={{ paddingBottom: 10 }}>
+                <h3>Comets &lt; mag 15 <span className="count">{filtered.length}</span></h3>
+                <div className="search-bar">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <circle cx="11" cy="11" r="6" /><path d="M20 20 L15.5 15.5" />
+                  </svg>
+                  <input placeholder="Search designation…" value={query} onChange={e => setQuery(e.target.value)} />
+                </div>
+                <div className="mono" style={{ marginTop: 8, fontSize: 10, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
+                  SOURCE · {source}
+                </div>
+              </div>
+              <div className="home__comets">
+                {filtered.map(c => {
+                  const on = selectedIds.includes(c.designation);
+                  return (
+                    <div key={c.designation} className={"home__comet-row" + (on ? " is-selected" : "")} onClick={() => toggle(c.designation)}>
+                      <span style={{
+                        width: 12, height: 12,
+                        background: on ? "var(--ember)" : "var(--bg-1)",
+                        border: "1px solid " + (on ? "var(--ember)" : "var(--hairline-strong)"),
+                        borderRadius: 2,
+                      }} />
+                      <div>
+                        <div className="home__comet-row-name">{c.designation}</div>
+                        <div className="home__comet-row-sub">{(c.type || "").slice(0, 22)}</div>
+                      </div>
+                      <div className="home__comet-row-mag">{c.mag.toFixed(1)}m</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </aside>
+          </div>
+        </Shell>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Home />);
+  </script>
+</body>
+</html>
