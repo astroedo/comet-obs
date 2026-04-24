@@ -20,19 +20,281 @@
   <script type="text/babel" src="shell.jsx"></script>
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
+    const RAD = Math.PI / 180, DEG = 180 / Math.PI;
 
+    // ── Sky-position math ────────────────────────────────────────────────────
+    function cometSkyInfo(comet, jd, loc) {
+      const posC = window.Astro.cometHeliocentric(comet, jd);
+      const posE = window.Astro.heliocentric(window.Astro.PLANETS.earth, jd);
+      const dx = posC.x - posE.x, dy = posC.y - posE.y, dz = posC.z - posE.z;
+      const eps = 23.4392911 * RAD;
+      const xe = dx;
+      const ye = dy * Math.cos(eps) - dz * Math.sin(eps);
+      const ze = dy * Math.sin(eps) + dz * Math.cos(eps);
+      const dist = Math.sqrt(xe*xe + ye*ye + ze*ze);
+      const ra   = Math.atan2(ye, xe);
+      const dec  = Math.asin(Math.max(-1, Math.min(1, ze / dist)));
+      const lst  = window.Astro.localSiderealTime(jd, loc.lon);
+      const { alt, az } = window.Astro.raDecToAltAz(ra, dec, lst, loc.lat * RAD);
+      const distSun = Math.sqrt(posC.x**2 + posC.y**2 + posC.z**2);
+      return { ra, dec, alt: alt * DEG, az: az * DEG, dist, distSun };
+    }
+
+    function fmtRA(rad) {
+      const deg = ((rad * DEG) % 360 + 360) % 360;
+      const h  = deg / 15;
+      const hh = Math.floor(h);
+      const mm = Math.floor((h - hh) * 60);
+      const ss = Math.floor(((h - hh) * 60 - mm) * 60);
+      return `${String(hh).padStart(2,"0")}h ${String(mm).padStart(2,"0")}m ${String(ss).padStart(2,"0")}s`;
+    }
+    function fmtDec(rad) {
+      const deg  = rad * DEG;
+      const sign = deg >= 0 ? "+" : "−";
+      const a = Math.abs(deg);
+      const d = Math.floor(a);
+      const m = Math.floor((a - d) * 60);
+      const s = Math.floor(((a - d) * 60 - m) * 60);
+      return `${sign}${String(d).padStart(2,"0")}° ${String(m).padStart(2,"0")}′ ${String(s).padStart(2,"0")}″`;
+    }
+    function fmtOffset(h) {
+      if (h === 0) return "now";
+      const absH = Math.abs(h);
+      const sign = h > 0 ? "+" : "−";
+      if (absH < 24) return `${sign}${absH}h`;
+      const d = Math.floor(absH / 24), rh = absH % 24;
+      return rh === 0 ? `${sign}${d}d` : `${sign}${d}d ${rh}h`;
+    }
+
+    // ── Sky dome ─────────────────────────────────────────────────────────────
+    function CometSkyDome({ info }) {
+      if (!info) return null;
+      const azNorm = (((info.az % 360) + 360) % 360);
+      const x = azNorm / 360 * 100;
+      const y = Math.max(5, Math.min(88, 70 - (info.alt / 90) * 65));
+      const visible = info.alt > 0;
+      return (
+        <div className="skyview">
+          <div className="skyview__horizon" />
+          <div className="skyview__axis-label" style={{ left: 16, top: 12 }}>ZENITH ↑</div>
+          <div className="skyview__axis-label" style={{ left: 16, bottom: 14 }}>HORIZON</div>
+          <div className="skyview__axis-label" style={{ left: "25%", bottom: 8 }}>E</div>
+          <div className="skyview__axis-label" style={{ left: "50%", bottom: 8 }}>S</div>
+          <div className="skyview__axis-label" style={{ left: "75%", bottom: 8 }}>W</div>
+          {info.alt > -12 && (
+            <React.Fragment>
+              <div className="skyview__planet" style={{
+                left: x + "%", top: y + "%",
+                background: "var(--ember)", color: "var(--ember)",
+                opacity: visible ? 1 : 0.3,
+                width: 16, height: 16,
+                boxShadow: visible ? "0 0 22px 5px var(--ember-glow)" : "none",
+              }} />
+              <div className="skyview__planet-label" style={{ left: x + "%", top: y + "%" }}>
+                COMET
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      );
+    }
+
+    // ── 24-hour altitude chart ────────────────────────────────────────────────
+    function AltChart({ comet, loc, hourOffset }) {
+      const W = 560, H = 110;
+      const pad = { l: 38, r: 12, t: 10, b: 26 };
+      const iW  = W - pad.l - pad.r, iH = H - pad.t - pad.b;
+
+      const pts = useMemo(() => {
+        const arr = [];
+        for (let h = -12; h <= 12; h++) {
+          const jdH = window.Astro.julianDate(new Date(Date.now() + (hourOffset + h) * 3600000));
+          try {
+            const inf = cometSkyInfo(comet, jdH, loc);
+            arr.push({ h, alt: Math.max(-90, Math.min(90, inf.alt)) });
+          } catch { arr.push({ h, alt: -90 }); }
+        }
+        return arr;
+      }, [comet, loc, hourOffset]);
+
+      const altToY = a => pad.t + iH * (1 - (a + 90) / 180);
+      const hToX   = h => pad.l + ((h + 12) / 24) * iW;
+      const horizY = altToY(0);
+      const linePts = pts.map(p => `${hToX(p.h).toFixed(1)},${altToY(p.alt).toFixed(1)}`);
+      const pathD   = "M" + linePts.join(" L");
+      const fillD   = pathD + ` L${hToX(12)},${horizY} L${hToX(-12)},${horizY} Z`;
+
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+          <clipPath id="aboveH"><rect x={pad.l} y={pad.t} width={iW} height={horizY - pad.t} /></clipPath>
+          <path d={fillD} fill="var(--ember)" opacity="0.08" clipPath="url(#aboveH)" />
+          {[45, 0, -45].map(a => (
+            <line key={a} x1={pad.l} y1={altToY(a)} x2={pad.l + iW} y2={altToY(a)}
+              stroke={a === 0 ? "rgba(140,170,255,0.3)" : "rgba(140,170,255,0.10)"}
+              strokeWidth="1" strokeDasharray={a === 0 ? "4 3" : "2 4"} />
+          ))}
+          <line x1={hToX(0)} y1={pad.t} x2={hToX(0)} y2={pad.t + iH}
+            stroke="var(--ember)" strokeWidth="1" opacity="0.55" />
+          <path d={pathD} fill="none" stroke="var(--ember)" strokeWidth="2" strokeLinejoin="round" />
+          {[-12, -6, 0, 6, 12].map(h => (
+            <text key={h} x={hToX(h)} y={H - 6} textAnchor="middle"
+              fontSize="9" fill="var(--ink-faint)" fontFamily="var(--font-mono)">
+              {h === 0 ? "NOW" : (h > 0 ? `+${h}h` : `${h}h`)}
+            </text>
+          ))}
+          {[90, 45, 0, -45].map(a => (
+            <text key={a} x={pad.l - 4} y={altToY(a) + 3.5} textAnchor="end"
+              fontSize="9" fill="var(--ink-faint)" fontFamily="var(--font-mono)">{a}°</text>
+          ))}
+        </svg>
+      );
+    }
+
+    // ── Comet detail panel ────────────────────────────────────────────────────
+    function CometDetailPanel({ comet, loc, onBack }) {
+      const [hourOffset, setHourOffset] = useState(0);
+
+      const jd   = window.Astro.julianDate(new Date(Date.now() + hourOffset * 3600000));
+      const info = useMemo(() => {
+        try { return cometSkyInfo(comet, jd, loc); } catch { return null; }
+      }, [comet, jd, loc]);
+
+      const targetTime = new Date(Date.now() + hourOffset * 3600000);
+      const localStr   = targetTime.toLocaleString(undefined, {
+        weekday: "short", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short",
+      });
+
+      return (
+        <div className="comet-detail">
+          {/* Header */}
+          <div className="comet-detail__header">
+            <button onClick={onBack}
+              style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.08em", flexShrink: 0 }}>
+              ← CATALOG
+            </button>
+            <div style={{ flex: 1 }}>
+              <h1 className="page-title">{comet.designation}</h1>
+              {comet.name !== comet.designation &&
+                <div className="page-sub">{comet.name}</div>}
+            </div>
+            <div style={{ textAlign: "right", lineHeight: 1.8 }}>
+              <span className="chip chip--cyan">{(comet.type || "unknown").slice(0, 24)}</span>
+              {comet.peri_date && (
+                <div className="mono" style={{ fontSize: 11, marginTop: 4 }}>
+                  <span className="faint">PERIHELION </span>{comet.peri_date}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Time slider */}
+          <div className="planets-time">
+            <span className="planets-time__label">TIME</span>
+            <input type="range" min="-72" max="72" step="1" value={hourOffset}
+              onChange={e => setHourOffset(Number(e.target.value))} />
+            <span className="planets-time__value">{fmtOffset(hourOffset)} · {localStr}</span>
+            <button onClick={() => setHourOffset(0)}
+              style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.12em", padding: "3px 10px" }}>
+              NOW
+            </button>
+          </div>
+
+          {/* Sky dome */}
+          <CometSkyDome info={info} />
+
+          {/* Stats */}
+          {info ? (
+            <div className="comet-detail__stats">
+              <div style={{ gridColumn: "span 2" }}>
+                <div className="planet-card__stat-label">ALTITUDE</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 2 }}>
+                  <span className="planet-card__stat-value" style={{
+                    fontSize: 22,
+                    color: info.alt > 0 ? "var(--cyan)" : "var(--ink-faint)",
+                  }}>{info.alt.toFixed(1)}°</span>
+                  <span className={"chip " + (info.alt > 0 ? "chip--ok" : "")}>
+                    {info.alt > 0 ? "Above horizon" : "Below horizon"}
+                  </span>
+                </div>
+              </div>
+
+              {[
+                { label: "AZIMUTH",    value: info.az.toFixed(1) + "°" },
+                { label: "RA",         value: fmtRA(info.ra) },
+                { label: "DEC",        value: fmtDec(info.dec) },
+                { label: "DIST EARTH", value: info.dist.toFixed(3) + " AU" },
+                { label: "DIST SUN",   value: info.distSun.toFixed(3) + " AU" },
+                { label: "MAG (EST)",  value: comet.mag.toFixed(1) },
+              ].map(({ label, value }) => (
+                <div key={label}>
+                  <div className="planet-card__stat-label">{label}</div>
+                  <div className="planet-card__stat-value">{value}</div>
+                </div>
+              ))}
+
+              {comet.note && (
+                <div style={{ gridColumn: "1 / -1", paddingTop: 6 }}>
+                  <div className="planet-card__stat-label">NOTE</div>
+                  <div style={{ fontSize: 13, color: "var(--ink-dim)", marginTop: 3, lineHeight: 1.5 }}>
+                    {comet.note}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: "32px 0", textAlign: "center" }} className="mono faint">
+              Cannot compute sky position — orbital elements may be incomplete.
+            </div>
+          )}
+
+          {/* 24h altitude chart */}
+          <div style={{ marginTop: 24 }}>
+            <div className="page-sub" style={{ marginBottom: 8 }}>24-HOUR ALTITUDE PROFILE</div>
+            <div style={{
+              background: "var(--bg-1)", border: "1px solid var(--hairline)",
+              borderRadius: 6, padding: "10px 8px 6px",
+            }}>
+              <AltChart comet={comet} loc={loc} hourOffset={hourOffset} />
+            </div>
+          </div>
+
+          {/* Orbital elements */}
+          <div style={{ marginTop: 24, paddingBottom: 16 }}>
+            <div className="page-sub" style={{ marginBottom: 10 }}>ORBITAL ELEMENTS</div>
+            <div className="comet-detail__orb">
+              {[
+                ["q (perihelion dist.)", comet.q?.toFixed(5) + " AU"],
+                ["e (eccentricity)",     comet.e?.toFixed(6)],
+                ["i (inclination)",      comet.i?.toFixed(3) + "°"],
+                ["Ω (ascending node)",   comet.node?.toFixed(3) + "°"],
+                ["ω (arg. perihelion)",  comet.peri?.toFixed(3) + "°"],
+                ["a (semi-major axis)",  comet.a != null ? comet.a.toFixed(3) + " AU" : "∞  (parabolic/hyperbolic)"],
+              ].map(([k, v]) => (
+                <div key={k} className="comet-detail__orb-row">
+                  <span className="faint">{k}</span>
+                  <span className="mono">{v || "—"}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Catalog list page ─────────────────────────────────────────────────────
     function CometsPage() {
-      const [comets, setComets] = useState([]);
-      const [source, setSource] = useState("Loading…");
-      const [maxMagStr, setMaxMagStr] = useState("15");
-      const maxMag = parseFloat(maxMagStr);  // NaN → filter uses c.mag <= NaN → no results shown (user intention)
-      const [sort, setSort] = useState("mag");
-      const [query, setQuery] = useState("");
-      const [selected, setSelected] = useState(() => {
+      const [comets,      setComets]      = useState([]);
+      const [source,      setSource]      = useState("Loading…");
+      const [maxMagStr,   setMaxMagStr]   = useState("15");
+      const [sort,        setSort]        = useState("mag");
+      const [query,       setQuery]       = useState("");
+      const [selected,    setSelected]    = useState(() => {
         try { return JSON.parse(localStorage.getItem("co_selected") || "[]"); } catch { return []; }
       });
-      useEffect(() => { localStorage.setItem("co_selected", JSON.stringify(selected)); }, [selected]);
+      const [detailComet, setDetailComet] = useState(null);
+      const maxMag = parseFloat(maxMagStr);
 
+      useEffect(() => { localStorage.setItem("co_selected", JSON.stringify(selected)); }, [selected]);
       useEffect(() => {
         window.CometData.fetchCometsFromJPL().then(res => {
           setComets(res.comets); setSource(res.source);
@@ -42,98 +304,129 @@
       const rows = useMemo(() => {
         const q = query.toLowerCase().trim();
         let r = isNaN(maxMag) ? comets : comets.filter(c => c.mag <= maxMag);
-        if (q) r = r.filter(c => c.name.toLowerCase().includes(q) || (c.designation || "").toLowerCase().includes(q) || (c.type || "").toLowerCase().includes(q));
-        r = [...r].sort((a, b) => {
-          if (sort === "mag") return a.mag - b.mag;
+        if (q) r = r.filter(c =>
+          c.name.toLowerCase().includes(q) ||
+          (c.designation || "").toLowerCase().includes(q) ||
+          (c.type || "").toLowerCase().includes(q)
+        );
+        return [...r].sort((a, b) => {
+          if (sort === "mag")  return a.mag - b.mag;
           if (sort === "name") return (a.designation || a.name).localeCompare(b.designation || b.name);
           if (sort === "peri") return (a.peri_date || "").localeCompare(b.peri_date || "");
           return 0;
         });
-        return r;
       }, [comets, maxMagStr, sort, query]);
 
-      const toggle = id => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+      const toggle = (id, e) => {
+        e.stopPropagation();
+        setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+      };
 
       return (
         <Shell current="comets.html">
-          <div className="comets-page">
-            <div className="comets-header">
-              <div>
-                <h1 className="page-title">Comet Catalog</h1>
-                <div className="page-sub">JPL SBDB · visible below magnitude {maxMagStr}</div>
-              </div>
-              <div className="mono" style={{ fontSize: 11, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
-                {rows.length} / {comets.length} · {source}
-              </div>
+          {({ loc }) => detailComet ? (
+            <div className="planets-page">
+              <CometDetailPanel comet={detailComet} loc={loc} onBack={() => setDetailComet(null)} />
             </div>
-
-            <div className="comets-filters">
-              <label>MAG &lt;
-                <input type="number" value={maxMagStr}
-                  onChange={e => setMaxMagStr(e.target.value)}
-                  onBlur={e => { if (e.target.value.trim() === "") setMaxMagStr("15"); }}
-                  style={{ width: 60 }} />
-              </label>
-              <label>SORT
-                <select value={sort} onChange={e => setSort(e.target.value)}>
-                  <option value="mag">Brightness</option>
-                  <option value="name">Designation</option>
-                  <option value="peri">Perihelion date</option>
-                </select>
-              </label>
-              <div className="search-bar" style={{ marginLeft: "auto", minWidth: 260 }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <circle cx="11" cy="11" r="6" /><path d="M20 20 L15.5 15.5" />
-                </svg>
-                <input placeholder="Search name, designation, type…" value={query} onChange={e => setQuery(e.target.value)} />
+          ) : (
+            <div className="comets-page">
+              <div className="comets-header">
+                <div>
+                  <h1 className="page-title">Comet Catalog</h1>
+                  <div className="page-sub">JPL SBDB · click a row to see sky position</div>
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--ink-faint)", letterSpacing: "0.08em" }}>
+                  {rows.length} / {comets.length} · {source}
+                </div>
               </div>
-            </div>
 
-            <div className="comets-table">
-              <div className="comets-table__head">
-                <div>Designation · Name</div>
-                <div>Mag now</div>
-                <div>Mag peri</div>
-                <div>Perihelion</div>
-                <div>Orbit type</div>
-                <div>Note</div>
-                <div>Plot</div>
+              <div className="comets-filters">
+                <label>MAG &lt;
+                  <input type="number" value={maxMagStr}
+                    onChange={e => setMaxMagStr(e.target.value)}
+                    onBlur={e => { if (e.target.value.trim() === "") setMaxMagStr("15"); }}
+                    style={{ width: 60 }} />
+                </label>
+                <label>SORT
+                  <select value={sort} onChange={e => setSort(e.target.value)}>
+                    <option value="mag">Brightness</option>
+                    <option value="name">Designation</option>
+                    <option value="peri">Perihelion date</option>
+                  </select>
+                </label>
+                <div className="search-bar" style={{ marginLeft: "auto", minWidth: 260 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <circle cx="11" cy="11" r="6" /><path d="M20 20 L15.5 15.5" />
+                  </svg>
+                  <input placeholder="Search name, designation, type…" value={query}
+                    onChange={e => setQuery(e.target.value)} />
+                </div>
               </div>
-              {rows.map(c => {
-                const on = selected.includes(c.designation);
-                const pct = Math.max(0, Math.min(1, (15 - c.mag) / 15));
-                return (
-                  <div key={c.designation} className="comets-table__row" onClick={() => toggle(c.designation)}>
-                    <div>
-                      <div className="comets-table__name">{c.designation}</div>
-                      <div className="dim" style={{ fontSize: 11, marginTop: 2 }}>{c.name}</div>
+
+              <div className="comets-table">
+                <div className="comets-table__head">
+                  <div>Designation · Name</div>
+                  <div>Mag est.</div>
+                  <div>Mag peri</div>
+                  <div>Perihelion</div>
+                  <div>Orbit type</div>
+                  <div>Note</div>
+                  <div>Plot</div>
+                </div>
+
+                {rows.map(c => {
+                  const on  = selected.includes(c.designation);
+                  const pct = Math.max(0, Math.min(1, (15 - c.mag) / 15));
+                  return (
+                    <div key={c.designation} className="comets-table__row"
+                      onClick={() => setDetailComet(c)} title="Click to view sky visibility">
+                      <div>
+                        <div className="comets-table__name">{c.designation}</div>
+                        <div className="dim" style={{ fontSize: 11, marginTop: 2 }}>{c.name}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: "var(--cyan)" }}>{c.mag.toFixed(1)}</div>
+                        <div className="mag-bar">
+                          <div className="mag-bar__fill" style={{ width: (pct * 100) + "%" }} />
+                        </div>
+                      </div>
+                      <div className="dim">{c.mag_peri != null ? c.mag_peri.toFixed(1) : "—"}</div>
+                      <div className="dim">{c.peri_date || "—"}</div>
+                      <div><span className="chip chip--cyan">{(c.type || "unknown").slice(0, 22)}</span></div>
+                      <div className="comets-table__note">
+                        {c.note || <span className="faint">—</span>}
+                      </div>
+                      <div onClick={e => toggle(c.designation, e)} style={{ cursor: "pointer" }}>
+                        <span style={{
+                          width: 14, height: 14, display: "inline-grid", placeItems: "center",
+                          background: on ? "var(--ember)" : "var(--bg-1)",
+                          border: "1px solid " + (on ? "var(--ember)" : "var(--hairline-strong)"),
+                          borderRadius: 2,
+                        }}>
+                          {on && (
+                            <span style={{
+                              width: 6, height: 3,
+                              borderLeft: "1.5px solid #0a0a0a",
+                              borderBottom: "1.5px solid #0a0a0a",
+                              transform: "rotate(-45deg) translate(1px, -1px)",
+                              display: "block",
+                            }} />
+                          )}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <div style={{ color: "var(--cyan)" }}>{c.mag.toFixed(1)}</div>
-                      <div className="mag-bar"><div className="mag-bar__fill" style={{ width: (pct * 100) + "%" }} /></div>
-                    </div>
-                    <div className="dim">{c.mag_peri != null ? c.mag_peri.toFixed(1) : "—"}</div>
-                    <div className="dim">{c.peri_date || "—"}</div>
-                    <div><span className="chip chip--cyan">{(c.type || "unknown").slice(0, 22)}</span></div>
-                    <div className="comets-table__note">{c.note || <span className="faint">—</span>}</div>
-                    <div>
-                      <span className="check__box" style={{
-                        width: 14, height: 14, display: "inline-grid", placeItems: "center",
-                        background: on ? "var(--ember)" : "var(--bg-1)",
-                        border: "1px solid " + (on ? "var(--ember)" : "var(--hairline-strong)"),
-                        borderRadius: 2,
-                      }}>
-                        {on && <span style={{ width: 6, height: 3, borderLeft: "1.5px solid #0a0a0a", borderBottom: "1.5px solid #0a0a0a", transform: "rotate(-45deg) translate(1px, -1px)", display: "block" }} />}
-                      </span>
-                    </div>
+                  );
+                })}
+
+                {rows.length === 0 && (
+                  <div style={{ padding: 40, textAlign: "center" }} className="mono faint">
+                    No comets match current filter.
                   </div>
-                );
-              })}
-              {rows.length === 0 && (
-                <div style={{ padding: 40, textAlign: "center" }} className="mono faint">No comets match current filter.</div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </Shell>
       );
     }
