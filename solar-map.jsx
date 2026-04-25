@@ -468,86 +468,52 @@ function makeGlowTexture(THREE) {
 }
 
 function makeGalaxyBackground(THREE) {
-  // Hybrid approach: a glow-only sphere for the Milky Way band (no dots → no
-  // canvas-pixel magnification artifacts) PLUS a proper THREE.Points star cloud.
+  // Real Milky Way photo texture on a BackSide sphere + crisp THREE.Points stars.
+  // Primary:  2MASS All-Sky infrared survey (equirectangular, Wikimedia Commons)
+  // Fallback: ESO Milky Way panorama (also equirectangular)
+  // Both are served with CORS headers from Wikimedia CDN.
   const group = new THREE.Group();
 
-  // ── IAU galactic constants ─────────────────────────────────────────────
+  // ── 1. Background photo sphere ─────────────────────────────────────────
+  const bgMat = new THREE.MeshBasicMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    color: 0x000008,          // deep-space blue-black until texture loads
+  });
+  const bgSphere = new THREE.Mesh(new THREE.SphereGeometry(899, 64, 32), bgMat);
+  group.add(bgSphere);
+
+  const GALAXY_URLS = [
+    // 2MASS infrared all-sky survey — galactic centre prominent, equirectangular
+    "https://upload.wikimedia.org/wikipedia/commons/0/08/2MASS_All_Sky_Image.jpg",
+    // ESO optical Milky Way panorama — fallback
+    "https://upload.wikimedia.org/wikipedia/commons/5/54/Milky_Way_2005.jpg",
+  ];
+
+  const loader = new THREE.TextureLoader();
+  const tryLoad = (urls, idx) => {
+    if (idx >= urls.length) return;
+    loader.load(urls[idx], (tex) => {
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.generateMipmaps = true;
+      // The 2MASS image has the galactic centre (RA~266°) at its horizontal
+      // midpoint, matching Three.js equirectangular UV convention closely
+      // enough for a background.  A small Y-rotation aligns it nicely.
+      bgSphere.rotation.y = Math.PI;   // flip so galactic centre faces forward
+      bgMat.map = tex;
+      bgMat.color.set(0xffffff);       // full brightness once texture is ready
+      bgMat.needsUpdate = true;
+    }, undefined, () => tryLoad(urls, idx + 1));
+  };
+  tryLoad(GALAXY_URLS, 0);
+
+  // ── 2. THREE.Points star cloud ─────────────────────────────────────────
+  // Crisp 1-pixel dots layered over the photo to add bright foreground stars.
+  // IAU galactic constants — used to bias band stars toward the galactic plane.
   const NGP_ra  = 192.859 * Math.PI / 180;
   const NGP_dec =  27.128 * Math.PI / 180;
   const lasc    = 122.932 * Math.PI / 180;
 
-  // ── 1. Milky Way glow on a BackSide sphere ─────────────────────────────
-  // Canvas contains ONLY soft gradients — zero individual dots — so nothing
-  // gets magnified into big blobs when the texture is mapped onto the sphere.
-  const GW = 1024, GH = 512;
-  const cv  = document.createElement("canvas");
-  cv.width  = GW; cv.height = GH;
-  const ctx = cv.getContext("2d");
-
-  // Build a lookup: for each pixel column, the Y of the galactic plane
-  const colY = Array.from({ length: GW }, () => []);
-  let prevPx = null, prevPy = null;
-  for (let i = 0; i <= 360; i++) {
-    const l   = (i / 360) * 2 * Math.PI;
-    const sD  = Math.cos(NGP_dec) * Math.sin(l - lasc); // b=0 → sin(b)=0
-    const dec = Math.asin(Math.max(-1, Math.min(1, sD)));
-    const yg  = Math.sin(NGP_dec) * Math.sin(l - lasc);
-    const xg  = Math.cos(l - lasc);
-    let ra    = Math.atan2(yg, xg) + NGP_ra;
-    if (ra < 0) ra += 2 * Math.PI;
-    if (ra >= 2 * Math.PI) ra -= 2 * Math.PI;
-    const px = (ra / (2 * Math.PI)) * GW;
-    const py = ((Math.PI / 2 - dec) / Math.PI) * GH;
-    if (prevPx !== null && Math.abs(px - prevPx) < GW / 2) {
-      const x0 = Math.round(Math.min(prevPx, px));
-      const x1 = Math.round(Math.max(prevPx, px));
-      for (let x = x0; x <= x1; x++) {
-        const t = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
-        const y = prevPx <= px ? prevPy + t*(py - prevPy) : py + t*(prevPy - py);
-        colY[Math.max(0, Math.min(GW - 1, x))].push(y);
-      }
-    }
-    prevPx = px; prevPy = py;
-  }
-
-  for (let x = 0; x < GW; x++) {
-    if (!colY[x].length) continue;
-    for (const cy of colY[x]) {
-      let g;
-      g = ctx.createLinearGradient(x, cy - GH*.30, x, cy + GH*.30);
-      g.addColorStop(0,   "rgba(6,12,38,0)");
-      g.addColorStop(0.5, "rgba(6,12,38,0.06)");
-      g.addColorStop(1,   "rgba(6,12,38,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.30, 1, GH*.60);
-
-      g = ctx.createLinearGradient(x, cy - GH*.085, x, cy + GH*.085);
-      g.addColorStop(0,   "rgba(28,52,130,0)");
-      g.addColorStop(0.5, "rgba(28,52,130,0.13)");
-      g.addColorStop(1,   "rgba(28,52,130,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.085, 1, GH*.17);
-
-      g = ctx.createLinearGradient(x, cy - GH*.022, x, cy + GH*.022);
-      g.addColorStop(0,   "rgba(90,130,230,0)");
-      g.addColorStop(0.5, "rgba(90,130,230,0.32)");
-      g.addColorStop(1,   "rgba(90,130,230,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.022, 1, GH*.044);
-    }
-  }
-
-  const gwTex = new THREE.CanvasTexture(cv);
-  gwTex.minFilter = THREE.LinearFilter;
-  group.add(new THREE.Mesh(
-    new THREE.SphereGeometry(899, 48, 24),
-    new THREE.MeshBasicMaterial({
-      map: gwTex, side: THREE.BackSide,
-      transparent: true, depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  ));
-
-  // ── 2. THREE.Points star cloud ─────────────────────────────────────────
-  // Clean crisp 1-pixel dots — no texture magnification issues.
   let rngS = 0xdeadbeef;
   const rng = () => {
     rngS = (Math.imul(rngS ^ (rngS >>> 16), 0x45d9f3b) ^ 0x3d4e5f6a) >>> 0;

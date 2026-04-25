@@ -255,7 +255,7 @@ function Topbar({ current, loc, setLoc, extra, theme, setTheme }) {
       <div className="topbar__brand">
         <span className="topbar__brand-icon" />
         <span className="topbar__brand-name">Comet Obs.</span>
-        <span className="topbar__brand-ver mono">v0.3</span>
+        <span className="topbar__brand-ver mono">v1.0</span>
       </div>
       <div className="topbar__divider" />
       <nav className="topbar__nav">
