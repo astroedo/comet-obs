@@ -40,7 +40,7 @@ function useLocation() {
       const s = JSON.parse(localStorage.getItem("co_loc") || "null");
       if (s && typeof s.lat === "number") return s;
     } catch {}
-    return { name: "New York, NY", lat: 40.7128, lon: -74.0060 };
+    return { name: "Milan, Italy", lat: 45.46, lon: 9.19 };
   });
 
   // Auto-geolocate exactly once on first visit (before any location is saved).
