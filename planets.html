@@ -69,7 +69,39 @@
     }
 
     function SkyDome({ planets }) {
-      // simple az/alt projection onto panel: az 0..360 mapped to width, alt -90..90 mapped to height (0 alt at 70% from top)
+      // Project: az 0..360 → x 0..100%, alt 90→5% top, alt 0→70% (horizon), alt -10→77%
+      const items = planets
+        .filter(p => p.altDeg > -10)
+        .map(p => ({
+          ...p,
+          xPct: (p.azDeg / 360) * 100,
+          yPct: 70 - (p.altDeg / 90) * 65,
+          labelOffy: 0,   // px nudge applied to avoid overlap
+        }));
+
+      // Collision avoidance: if two labels are within 5% x and 4% y of each other,
+      // push them apart vertically (–14px / +14px from the dot).
+      // Run multiple passes to handle 3+ planet clusters.
+      const PASSES = 3;
+      for (let pass = 0; pass < PASSES; pass++) {
+        for (let i = 0; i < items.length; i++) {
+          for (let j = i + 1; j < items.length; j++) {
+            const dx = Math.abs(items[i].xPct - items[j].xPct);
+            const dy = Math.abs(items[i].yPct - items[j].yPct);
+            if (dx < 5 && dy < 4) {
+              // Nudge: the higher planet's label goes up, lower goes down
+              if (items[i].yPct <= items[j].yPct) {
+                items[i].labelOffy -= 14;
+                items[j].labelOffy += 14;
+              } else {
+                items[i].labelOffy += 14;
+                items[j].labelOffy -= 14;
+              }
+            }
+          }
+        }
+      }
+
       return (
         <div className="skyview">
           <div className="skyview__horizon" />
@@ -78,20 +110,18 @@
           <div className="skyview__axis-label" style={{ left: "25%", bottom: 8 }}>E</div>
           <div className="skyview__axis-label" style={{ left: "50%", bottom: 8 }}>S</div>
           <div className="skyview__axis-label" style={{ left: "75%", bottom: 8 }}>W</div>
-          {planets.filter(p => p.altDeg > -10).map(p => {
-            const x = (p.azDeg / 360) * 100;
-            // alt 90 -> top (5%), alt 0 -> horizon line (70%), alt -10 -> below (80%)
-            const y = 70 - (p.altDeg / 90) * 65;
-            return (
-              <React.Fragment key={p.key}>
-                <div className="skyview__planet" style={{
-                  left: x + "%", top: y + "%", background: p.color,
-                  color: p.color, opacity: p.altDeg > 0 ? 1 : 0.4,
-                }} />
-                <div className="skyview__planet-label" style={{ left: x + "%", top: y + "%" }}>{p.name}</div>
-              </React.Fragment>
-            );
-          })}
+          {items.map(p => (
+            <React.Fragment key={p.key}>
+              <div className="skyview__planet" style={{
+                left: p.xPct + "%", top: p.yPct + "%", background: p.color,
+                opacity: p.altDeg > 0 ? 1 : 0.4,
+              }} />
+              <div className="skyview__planet-label" style={{
+                left: p.xPct + "%",
+                top: `calc(${p.yPct}% + ${p.labelOffy}px)`,
+              }}>{p.name}</div>
+            </React.Fragment>
+          ))}
         </div>
       );
     }

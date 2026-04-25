@@ -42,6 +42,16 @@ function useLocation() {
     } catch {}
     return { name: "New York, NY", lat: 40.7128, lon: -74.0060 };
   });
+
+  // Auto-geolocate exactly once on first visit (before any location is saved).
+  // If permission is granted the app immediately switches to the real coordinates.
+  useEffect(() => {
+    if (localStorage.getItem("co_loc")) return;   // already saved → skip
+    navigator.geolocation?.getCurrentPosition(pos => {
+      setLoc({ lat: pos.coords.latitude, lon: pos.coords.longitude, name: "My location" });
+    });
+  }, []);
+
   useEffect(() => { localStorage.setItem("co_loc", JSON.stringify(loc)); }, [loc]);
   return [loc, setLoc];
 }

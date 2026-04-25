@@ -117,11 +117,11 @@
   // Fields: full_name, M1 (total magnitude), K1 (slope), e, q, i, om, w, tp_tdb, class
   // M1/K1 give the standard comet total-magnitude formula:  m = M1 + 5·log₁₀(Δ) + 2.5·K1·log₁₀(r)
   // We use M1 directly as the near-perihelion magnitude estimate.
-  // Fetch all comets; M1/K1 are the standard comet total-brightness parameters.
+  // Limit 500 to capture all recently discovered comets (new designations can push past 120).
   // We filter client-side after parsing so we don't risk a server-side filter error.
   const JPL_URL = "https://ssd-api.jpl.nasa.gov/sbdb_query.api" +
     "?fields=full_name,M1,K1,e,q,i,om,w,tp_tdb,per,class" +
-    "&sb-group=com&sb-kind=c&full-prec=false&limit=120";
+    "&sb-group=com&sb-kind=c&full-prec=false&limit=500";
 
   async function fetchCometsFromJPL() {
     try {
@@ -174,7 +174,7 @@
           peri_date,
           type: cls || "unknown",
         };
-      }).filter(c => Number.isFinite(c.mag) && c.mag <= 16
+      }).filter(c => Number.isFinite(c.mag) && c.mag <= 18   // 18 = include newly discovered faint comets
                   && Number.isFinite(c.q) && Number.isFinite(c.e)
                   && Number.isFinite(c.i) && Number.isFinite(c.tp));
 

@@ -284,6 +284,7 @@
     // ── Catalog list page ─────────────────────────────────────────────────────
     function CometsPage() {
       const [comets,      setComets]      = useState([]);
+      const [loading,     setLoading]     = useState(true);
       const [source,      setSource]      = useState("Loading…");
       const [maxMagStr,   setMaxMagStr]   = useState("15");
       const [sort,        setSort]        = useState("mag");
@@ -297,10 +298,11 @@
       useEffect(() => { localStorage.setItem("co_selected", JSON.stringify(selected)); }, [selected]);
       useEffect(() => {
         window.CometData.fetchCometsFromJPL().then(res => {
-          setComets(res.comets); setSource(res.source);
+          setComets(res.comets); setSource(res.source); setLoading(false);
         });
       }, []);
 
+      const today = new Date().toISOString().slice(0, 10);
       const rows = useMemo(() => {
         const q = query.toLowerCase().trim();
         let r = isNaN(maxMag) ? comets : comets.filter(c => c.mag <= maxMag);
@@ -310,9 +312,16 @@
           (c.type || "").toLowerCase().includes(q)
         );
         return [...r].sort((a, b) => {
-          if (sort === "mag")  return a.mag - b.mag;
-          if (sort === "name") return (a.designation || a.name).localeCompare(b.designation || b.name);
-          if (sort === "peri") return (a.peri_date || "").localeCompare(b.peri_date || "");
+          if (sort === "mag")      return a.mag - b.mag;
+          if (sort === "mag_peri") return (a.mag_peri ?? 99) - (b.mag_peri ?? 99);
+          if (sort === "name")     return (a.designation || a.name).localeCompare(b.designation || b.name);
+          if (sort === "peri")     return (a.peri_date || "").localeCompare(b.peri_date || "");
+          if (sort === "peri_near") {
+            // nearest to today (past or future) first
+            const da = Math.abs(new Date(a.peri_date || "2000-01-01") - new Date(today));
+            const db = Math.abs(new Date(b.peri_date || "2000-01-01") - new Date(today));
+            return da - db;
+          }
           return 0;
         });
       }, [comets, maxMagStr, sort, query]);
@@ -349,9 +358,11 @@
                 </label>
                 <label>SORT
                   <select value={sort} onChange={e => setSort(e.target.value)}>
-                    <option value="mag">Brightness</option>
+                    <option value="mag">Brightness (now)</option>
+                    <option value="mag_peri">Mag at perihelion</option>
+                    <option value="peri_near">Perihelion (nearest)</option>
+                    <option value="peri">Perihelion (chronological)</option>
                     <option value="name">Designation</option>
-                    <option value="peri">Perihelion date</option>
                   </select>
                 </label>
                 <div className="search-bar" style={{ marginLeft: "auto", minWidth: 260 }}>
@@ -374,6 +385,15 @@
                   <div>Note</div>
                   <div>Plot</div>
                 </div>
+
+                {loading && (
+                  <div style={{ padding: 40, textAlign: "center" }}>
+                    <span className="loader" />
+                    <div className="mono faint" style={{ marginTop: 14, fontSize: 11 }}>
+                      Fetching live data from JPL SBDB…
+                    </div>
+                  </div>
+                )}
 
                 {rows.map(c => {
                   const on  = selected.includes(c.designation);

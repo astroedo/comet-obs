@@ -468,176 +468,147 @@ function makeGlowTexture(THREE) {
 }
 
 function makeGalaxyBackground(THREE) {
-  // Equirectangular sky texture: 2048×1024 canvas mapped onto a BackSide sphere.
-  // Renders the Milky Way band using the correct IAU galactic→equatorial rotation,
-  // plus dense band stars and sparse isotropic background stars.
-  const W = 2048, H = 1024;
-  const cv = document.createElement("canvas");
-  cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d");
+  // Hybrid approach: a glow-only sphere for the Milky Way band (no dots → no
+  // canvas-pixel magnification artifacts) PLUS a proper THREE.Points star cloud.
+  const group = new THREE.Group();
 
-  // Deep space background
-  ctx.fillStyle = "#020309";
-  ctx.fillRect(0, 0, W, H);
-
-  // ── Galactic plane path ──────────────────────────────────────────────────
-  // IAU 1958 constants (J2000): NGP at (α₀=192.859°, δ₀=27.128°),
-  // ascending node of galactic plane at galactic longitude l_asc=122.932°.
+  // ── IAU galactic constants ─────────────────────────────────────────────
   const NGP_ra  = 192.859 * Math.PI / 180;
-  const NGP_dec = 27.128  * Math.PI / 180;
+  const NGP_dec =  27.128 * Math.PI / 180;
   const lasc    = 122.932 * Math.PI / 180;
 
-  // For each galactic longitude l, compute equatorial (ra, dec) of b=0 point.
-  const STEPS = 720;
-  // colY[x] = list of pixel-y values where the galactic plane crosses column x
-  const colY = Array.from({ length: W }, () => []);
+  // ── 1. Milky Way glow on a BackSide sphere ─────────────────────────────
+  // Canvas contains ONLY soft gradients — zero individual dots — so nothing
+  // gets magnified into big blobs when the texture is mapped onto the sphere.
+  const GW = 1024, GH = 512;
+  const cv  = document.createElement("canvas");
+  cv.width  = GW; cv.height = GH;
+  const ctx = cv.getContext("2d");
 
+  // Build a lookup: for each pixel column, the Y of the galactic plane
+  const colY = Array.from({ length: GW }, () => []);
   let prevPx = null, prevPy = null;
-  for (let i = 0; i <= STEPS; i++) {
-    const l = (i / STEPS) * 2 * Math.PI;
-    const sinDec = Math.cos(NGP_dec) * Math.sin(l - lasc);   // b=0 → cos(b)=1, sin(b)=0
-    const dec = Math.asin(Math.max(-1, Math.min(1, sinDec)));
+  for (let i = 0; i <= 360; i++) {
+    const l   = (i / 360) * 2 * Math.PI;
+    const sD  = Math.cos(NGP_dec) * Math.sin(l - lasc); // b=0 → sin(b)=0
+    const dec = Math.asin(Math.max(-1, Math.min(1, sD)));
     const yg  = Math.sin(NGP_dec) * Math.sin(l - lasc);
     const xg  = Math.cos(l - lasc);
-    let ra = Math.atan2(yg, xg) + NGP_ra;
+    let ra    = Math.atan2(yg, xg) + NGP_ra;
     if (ra < 0) ra += 2 * Math.PI;
     if (ra >= 2 * Math.PI) ra -= 2 * Math.PI;
-
-    const px = (ra / (2 * Math.PI)) * W;
-    const py = ((Math.PI / 2 - dec) / Math.PI) * H;
-
-    if (prevPx !== null) {
-      // Skip wrap-around segments
-      if (Math.abs(px - prevPx) < W / 2) {
-        const x0 = Math.round(Math.min(prevPx, px));
-        const x1 = Math.round(Math.max(prevPx, px));
-        for (let x = x0; x <= x1; x++) {
-          const t = (x1 === x0) ? 0 : (x - x0) / (x1 - x0);
-          const y = prevPx < px ? (prevPy + t * (py - prevPy)) : (py + t * (prevPy - py));
-          colY[Math.max(0, Math.min(W - 1, x))].push(y);
-        }
+    const px = (ra / (2 * Math.PI)) * GW;
+    const py = ((Math.PI / 2 - dec) / Math.PI) * GH;
+    if (prevPx !== null && Math.abs(px - prevPx) < GW / 2) {
+      const x0 = Math.round(Math.min(prevPx, px));
+      const x1 = Math.round(Math.max(prevPx, px));
+      for (let x = x0; x <= x1; x++) {
+        const t = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
+        const y = prevPx <= px ? prevPy + t*(py - prevPy) : py + t*(prevPy - py);
+        colY[Math.max(0, Math.min(GW - 1, x))].push(y);
       }
     }
     prevPx = px; prevPy = py;
   }
 
-  // ── Milky Way glow layers (column by column) ────────────────────────────
-  for (let x = 0; x < W; x++) {
+  for (let x = 0; x < GW; x++) {
     if (!colY[x].length) continue;
-    for (const y of colY[x]) {
-      // Wide diffuse glow
-      let g = ctx.createLinearGradient(x, y - H * 0.26, x, y + H * 0.26);
-      g.addColorStop(0,   "rgba(15,28,60,0)");
-      g.addColorStop(0.5, "rgba(15,28,60,0.030)");
-      g.addColorStop(1,   "rgba(15,28,60,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, y - H * 0.26, 1, H * 0.52);
+    for (const cy of colY[x]) {
+      let g;
+      g = ctx.createLinearGradient(x, cy - GH*.30, x, cy + GH*.30);
+      g.addColorStop(0,   "rgba(6,12,38,0)");
+      g.addColorStop(0.5, "rgba(6,12,38,0.06)");
+      g.addColorStop(1,   "rgba(6,12,38,0)");
+      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.30, 1, GH*.60);
 
-      // Mid glow
-      g = ctx.createLinearGradient(x, y - H * 0.10, x, y + H * 0.10);
-      g.addColorStop(0,   "rgba(50,80,150,0)");
-      g.addColorStop(0.5, "rgba(50,80,150,0.065)");
-      g.addColorStop(1,   "rgba(50,80,150,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, y - H * 0.10, 1, H * 0.20);
+      g = ctx.createLinearGradient(x, cy - GH*.085, x, cy + GH*.085);
+      g.addColorStop(0,   "rgba(28,52,130,0)");
+      g.addColorStop(0.5, "rgba(28,52,130,0.13)");
+      g.addColorStop(1,   "rgba(28,52,130,0)");
+      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.085, 1, GH*.17);
 
-      // Inner bright
-      g = ctx.createLinearGradient(x, y - H * 0.032, x, y + H * 0.032);
-      g.addColorStop(0,   "rgba(110,145,215,0)");
-      g.addColorStop(0.5, "rgba(110,145,215,0.14)");
-      g.addColorStop(1,   "rgba(110,145,215,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, y - H * 0.032, 1, H * 0.064);
-
-      // Core
-      g = ctx.createLinearGradient(x, y - H * 0.011, x, y + H * 0.011);
-      g.addColorStop(0,   "rgba(175,205,255,0)");
-      g.addColorStop(0.5, "rgba(175,205,255,0.26)");
-      g.addColorStop(1,   "rgba(175,205,255,0)");
-      ctx.fillStyle = g; ctx.fillRect(x, y - H * 0.011, 1, H * 0.022);
+      g = ctx.createLinearGradient(x, cy - GH*.022, x, cy + GH*.022);
+      g.addColorStop(0,   "rgba(90,130,230,0)");
+      g.addColorStop(0.5, "rgba(90,130,230,0.32)");
+      g.addColorStop(1,   "rgba(90,130,230,0)");
+      ctx.fillStyle = g; ctx.fillRect(x, cy - GH*.022, 1, GH*.044);
     }
   }
 
-  // ── Seeded deterministic RNG ─────────────────────────────────────────────
-  let rngS = 0x1a2b3c4d;
+  const gwTex = new THREE.CanvasTexture(cv);
+  gwTex.minFilter = THREE.LinearFilter;
+  group.add(new THREE.Mesh(
+    new THREE.SphereGeometry(899, 48, 24),
+    new THREE.MeshBasicMaterial({
+      map: gwTex, side: THREE.BackSide,
+      transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  ));
+
+  // ── 2. THREE.Points star cloud ─────────────────────────────────────────
+  // Clean crisp 1-pixel dots — no texture magnification issues.
+  let rngS = 0xdeadbeef;
   const rng = () => {
     rngS = (Math.imul(rngS ^ (rngS >>> 16), 0x45d9f3b) ^ 0x3d4e5f6a) >>> 0;
     return rngS / 0x100000000;
   };
 
-  // ── Dense band stars ─────────────────────────────────────────────────────
-  for (let i = 0; i < 3800; i++) {
-    const l = rng() * 2 * Math.PI;
-    const bRaw = (rng() - 0.5) * Math.PI / 2.2;
-    const b = bRaw * Math.pow(rng(), 0.55); // concentrate toward plane
-    const sinDec = Math.cos(b) * Math.cos(NGP_dec) * Math.sin(l - lasc) + Math.sin(b) * Math.sin(NGP_dec);
-    const dec = Math.asin(Math.max(-1, Math.min(1, sinDec)));
-    const yg = Math.cos(b) * Math.sin(NGP_dec) * Math.sin(l - lasc) - Math.sin(b) * Math.cos(NGP_dec);
-    const xg = Math.cos(b) * Math.cos(l - lasc);
-    let ra = Math.atan2(yg, xg) + NGP_ra;
-    if (ra < 0) ra += 2 * Math.PI;
-    if (ra >= 2 * Math.PI) ra -= 2 * Math.PI;
-    const px = (ra / (2 * Math.PI)) * W;
-    const py = ((Math.PI / 2 - dec) / Math.PI) * H;
+  const BAND = 1200, ISO = 650, N = BAND + ISO;
+  const pos = new Float32Array(N * 3);
+  const col = new Float32Array(N * 3);
+  const R = 850;
+  let idx = 0;
+
+  // Band stars — concentrated near galactic plane
+  for (let i = 0; i < BAND; i++) {
+    const l    = rng() * 2 * Math.PI;
+    const bRaw = (rng() - 0.5) * 1.3;
+    const b    = bRaw * Math.pow(rng(), 0.5); // bias toward plane
+    const sinDec = Math.cos(b)*Math.cos(NGP_dec)*Math.sin(l-lasc) + Math.sin(b)*Math.sin(NGP_dec);
+    const dec    = Math.asin(Math.max(-1, Math.min(1, sinDec)));
+    const yg2    = Math.cos(b)*Math.sin(NGP_dec)*Math.sin(l-lasc) - Math.sin(b)*Math.cos(NGP_dec);
+    const xg2    = Math.cos(b)*Math.cos(l-lasc);
+    const ra     = Math.atan2(yg2, xg2) + NGP_ra;
+    const cosD   = Math.cos(dec);
+    pos[idx*3]   = R * cosD * Math.cos(ra);
+    pos[idx*3+1] = R * Math.sin(dec);
+    pos[idx*3+2] = R * cosD * Math.sin(ra);
     const bright = Math.pow(rng(), 2.0);
-    const r = 0.4 + bright * 1.2;
-    const a = 0.22 + bright * 0.68;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = rng() < 0.3 ? "rgb(170,195,255)" : "rgb(255,250,240)";
-    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+    const blue   = rng() < 0.38;
+    const sh     = 0.30 + bright * 0.65;
+    col[idx*3]   = blue ? sh*0.68 : sh;
+    col[idx*3+1] = blue ? sh*0.80 : sh*0.93;
+    col[idx*3+2] = sh;
+    idx++;
   }
 
-  // ── Isotropic background stars ───────────────────────────────────────────
-  for (let i = 0; i < 1800; i++) {
-    const u  = rng() * 2 - 1;
-    const t  = rng() * Math.PI * 2;
-    const xs = Math.sqrt(1 - u * u) * Math.cos(t);
-    const ys = u;
-    const zs = Math.sqrt(1 - u * u) * Math.sin(t);
-    const dec = Math.asin(ys);
-    const ra  = ((Math.atan2(zs, xs) + 2 * Math.PI) % (2 * Math.PI));
-    const px  = (ra / (2 * Math.PI)) * W;
-    const py  = ((Math.PI / 2 - dec) / Math.PI) * H;
-    const bright = Math.pow(rng(), 2.5);
-    const r  = 0.25 + bright * 0.85;
-    const a  = 0.15 + bright * 0.55;
-    const warm = rng() < 0.12;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = warm ? "rgb(255,220,175)" : (rng() < 0.2 ? "rgb(180,200,255)" : "rgb(245,248,255)");
-    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-
-  // ── Named bright stars ───────────────────────────────────────────────────
-  const BRIGHT = [
-    { ra: 101.28, dec: -16.72, s: 2.2, c: "255,255,255" },   // Sirius
-    { ra: 213.92, dec: -60.83, s: 1.8, c: "255,245,200" },   // α Cen
-    { ra: 279.23, dec:  38.78, s: 1.7, c: "210,230,255" },   // Vega
-    { ra:  88.79, dec:   7.41, s: 1.5, c: "255,195,130" },   // Betelgeuse
-    { ra:  83.82, dec:  -5.38, s: 1.6, c: "200,225,255" },   // Rigel
-    { ra:  79.17, dec:  45.99, s: 1.5, c: "255,235,180" },   // Capella
-    { ra: 297.70, dec:   8.87, s: 1.4, c: "255,250,220" },   // Altair
-    { ra: 252.17, dec: -34.37, s: 1.3, c: "255,160,100" },   // Antares
-    { ra:   6.55, dec:  29.09, s: 1.3, c: "255,200,150" },   // Hamal-ish
-    { ra: 114.83, dec:   5.23, s: 1.4, c: "255,235,195" },   // Procyon
-  ];
-  for (const bs of BRIGHT) {
-    const px = (bs.ra / 360) * W;
-    const py = ((90 - bs.dec) / 180) * H;
-    // soft glow halo
-    const g = ctx.createRadialGradient(px, py, 0, px, py, bs.s * 5);
-    g.addColorStop(0,   `rgba(${bs.c},0.75)`);
-    g.addColorStop(0.4, `rgba(${bs.c},0.12)`);
-    g.addColorStop(1,   "rgba(0,0,0,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(px - bs.s * 5, py - bs.s * 5, bs.s * 10, bs.s * 10);
-    // bright core
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = `rgb(${bs.c})`;
-    ctx.beginPath(); ctx.arc(px, py, bs.s, 0, Math.PI * 2); ctx.fill();
+  // Isotropic background
+  for (let i = 0; i < ISO; i++) {
+    const u    = rng() * 2 - 1;
+    const t    = rng() * Math.PI * 2;
+    const cosA = Math.sqrt(1 - u*u);
+    pos[idx*3]   = R * cosA * Math.cos(t);
+    pos[idx*3+1] = R * u;
+    pos[idx*3+2] = R * cosA * Math.sin(t);
+    const bright = Math.pow(rng(), 2.8);
+    const warm   = rng() < 0.12;
+    const sh     = 0.18 + bright * 0.55;
+    col[idx*3]   = warm ? sh*1.20 : sh*0.85;
+    col[idx*3+1] = warm ? sh*0.88 : sh*0.92;
+    col[idx*3+2] = warm ? sh*0.60 : sh;
+    idx++;
   }
 
-  const tex = new THREE.CanvasTexture(cv);
-  const geo = new THREE.SphereGeometry(900, 64, 32);
-  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
-  return new THREE.Mesh(geo, mat);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geom.setAttribute("color",    new THREE.BufferAttribute(col, 3));
+  group.add(new THREE.Points(geom, new THREE.PointsMaterial({
+    size: 1.3, vertexColors: true, sizeAttenuation: false,
+    transparent: true, opacity: 0.90, depthWrite: false,
+  })));
+
+  return group;
 }
 
 function makeLabelSprite(THREE, text, color = "#aab4c8") {

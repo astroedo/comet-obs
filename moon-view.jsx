@@ -42,12 +42,12 @@ function makeMoonTexture(THREE) {
   const ctx = canvas.getContext("2d");
   const rng = seededRng(42);
 
-  // ── Base highlands ──
+  // ── Base highlands — mid-gray like the real Moon ──
   const base = ctx.createLinearGradient(0, 0, 0, H);
-  base.addColorStop(0,   "#b5ac9e");
-  base.addColorStop(0.3, "#cec5b0");
-  base.addColorStop(0.6, "#c4bb9e");
-  base.addColorStop(1,   "#a09488");
+  base.addColorStop(0,   "#d4cfc4");
+  base.addColorStop(0.3, "#e8e2d5");
+  base.addColorStop(0.6, "#ddd7c8");
+  base.addColorStop(1,   "#c8c2b4");
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
 
@@ -201,8 +201,8 @@ function makeMoonTexture(THREE) {
   return tex;
 }
 
-// Real moon texture URL (GitHub raw — CORS allowed)
-const REAL_MOON_URL = "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/moon_1024.jpg";
+// Real moon texture — served from GitHub raw (CORS allowed on GitHub Pages)
+const REAL_MOON_URL = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/moon_1024.jpg";
 
 function MoonView({ phase, onSelectFeature, activeFeature, filterType = "all" }) {
   const hostRef = useRef(null);
@@ -256,9 +256,9 @@ function MoonView({ phase, onSelectFeature, activeFeature, filterType = "all" })
     });
 
     // Strong directional sun light for the phase
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.8);
+    const sun = new THREE.DirectionalLight(0xfff8f0, 2.8);
     scene.add(sun);
-    // Earthshine — makes dark side visible with bluish tint (realistic)
+    // Earthshine — faint blue-white ambient so the dark side isn't pure black
     scene.add(new THREE.AmbientLight(0x3a5577, 0.55));
 
     const rot = { y: 0, x: 0 };
@@ -287,7 +287,7 @@ function MoonView({ phase, onSelectFeature, activeFeature, filterType = "all" })
     let raf;
     const tick = () => {
       const { phase: ph, filterType: ft } = stateRef.current;
-      moon.rotation.y = rot.y;
+      moon.rotation.y = rot.y - Math.PI / 2;  // -90° offset aligns lon=0 to face camera
       moon.rotation.x = rot.x;
       // Sun angle from lunar phase
       const pa = (ph ?? 0.5) * Math.PI * 2;
@@ -303,12 +303,14 @@ function MoonView({ phase, onSelectFeature, activeFeature, filterType = "all" })
       const proj = visibleFeatures.map(f => {
         const latR = f.lat * Math.PI / 180;
         const lonR = f.lon * Math.PI / 180;
+        // 3D unit normal matching Three.js SphereGeometry UV → lon=0 at (1,0,0),
+        // same -PI/2 offset used by the mesh brings lon=0 to face the camera.
         const v = new THREE.Vector3(
-          Math.cos(latR) * Math.sin(lonR),
+          Math.cos(latR) * Math.cos(lonR),
           Math.sin(latR),
-          Math.cos(latR) * Math.cos(lonR)
+         -Math.cos(latR) * Math.sin(lonR)
         );
-        v.applyEuler(new THREE.Euler(rot.x, rot.y, 0, "XYZ"));
+        v.applyEuler(new THREE.Euler(rot.x, rot.y - Math.PI / 2, 0, "XYZ"));
         const pos3 = v.clone().multiplyScalar(1.52);
         const p = pos3.clone().project(camera);
         const sx = (p.x * 0.5 + 0.5) * rect.width;
