@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "comet-obs",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "8742", "/Users/edoardop/Desktop/Home/Progetti/Comet_webstie"],
+      "port": 8742
+    }
+  ]
+}

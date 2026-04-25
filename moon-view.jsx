@@ -290,8 +290,13 @@ function MoonView({ phase, onSelectFeature, activeFeature, filterType = "all" })
       moon.rotation.y = rot.y - Math.PI / 2;  // -90° offset aligns lon=0 to face camera
       moon.rotation.x = rot.x;
       // Sun angle from lunar phase
+      // pa = elongation angle (0=new, π=full, 2π=new again).
+      // Sun direction from Moon: (sin(ε), 0, −cos(ε))
+      //   ε=0  → (0,0,−1) behind Moon → dark visible face ✓ (new moon)
+      //   ε=π  → (0,0,+1) in front    → lit visible face  ✓ (full moon)
+      //   ε=π/2 → (1,0, 0) to right   → right half lit    ✓ (first quarter)
       const pa = (ph ?? 0.5) * Math.PI * 2;
-      sun.position.set(Math.sin(pa) * 6, Math.sin(pa * 0.3) * 1.5, Math.cos(pa) * 6);
+      sun.position.set(Math.sin(pa) * 8, 0, -Math.cos(pa) * 8);
 
       // Project feature labels — filtered by filterType
       const activeFilter = ft ?? "all";
